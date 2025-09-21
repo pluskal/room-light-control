@@ -56,6 +56,7 @@ from .const import (
     STATES,
 
     DEFAULT_DELAY,
+    DEFAULT_BLOCKING_TIMEOUT,
     DEFAULT_ILLUMINANCE_THRESHOLD,
     ACTIVATE_LIGHT_SCRIPT_OR_SCENE,
     CONF_TURN_OFF_LIGHT,
@@ -92,7 +93,7 @@ ENTITY_SCHEMA = vol.Schema(
         vol.Required(CONF_ROOM, default=[]): cv.entity_ids,
         vol.Required(CONF_ROOMS, default=[]): cv.entity_ids,
         vol.Optional(CONF_TURN_OFF_DELAY, default=DEFAULT_DELAY): cv.positive_int,
-        vol.Optional(CONF_BLOCKED_TIMEOUT, default=DEFAULT_DELAY): cv.positive_int,
+        vol.Optional(CONF_BLOCKED_TIMEOUT, default=DEFAULT_BLOCKING_TIMEOUT): cv.positive_int,
         vol.Optional(CONF_MOTION_SENSOR_RESETS_TIMER, default=False): cv.boolean,
         vol.Required(CONF_MOTION_SENSOR, default=[]): cv.entity_ids,
         vol.Required(CONF_MOTION_SENSORS, default=[]): cv.entity_ids,
@@ -1024,7 +1025,7 @@ class Model:
         self.turnOffDelay = config.get(CONF_TURN_OFF_DELAY, DEFAULT_DELAY)
 
     def config_blocked_timeout(self, config):
-        self.blockedTimeout = config.get(CONF_BLOCKED_TIMEOUT, self.turnOffDelay)
+        self.blockedTimeout = config.get(CONF_BLOCKED_TIMEOUT, DEFAULT_BLOCKING_TIMEOUT)
         self.update(blocking_entities_timeout=self.blockedTimeout)
 
     def config_other(self, config):
