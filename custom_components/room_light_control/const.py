@@ -18,6 +18,7 @@ CONF_ILLUMINANCE_SENSOR_THRESHOLD = "illuminance_sensor_threshold"
 DEFAULT_ILLUMINANCE_THRESHOLD = 5.0
 
 DEFAULT_DELAY = 180
+DEFAULT_BLOCKING_TIMEOUT = 3 * 60 * 60  # 3 hours
 
 # activate_light_script_or_scene (either script or scene)
 ACTIVATE_LIGHT_SCRIPT_OR_SCENE = "activate_light_script_or_scene"
@@ -28,6 +29,7 @@ CONF_TURN_OFF_DELAY = "turn_off_delay"
 
 CONF_TURN_OFF_BLOCKING_ENTITY = "turn_off_blocking_entity"
 CONF_TURN_OFF_BLOCKING_ENTITIES = "turn_off_blocking_entities"
+CONF_BLOCKED_TIMEOUT = "blocking_entities_timeout"
 
 STATES = ['idle', 'blocked',
           {'name': 'active', 'children': ['control'],

@@ -56,6 +56,7 @@ from .const import (
     STATES,
 
     DEFAULT_DELAY,
+    DEFAULT_BLOCKING_TIMEOUT,
     DEFAULT_ILLUMINANCE_THRESHOLD,
     ACTIVATE_LIGHT_SCRIPT_OR_SCENE,
     CONF_TURN_OFF_LIGHT,
@@ -68,6 +69,7 @@ from .const import (
     CONF_ILLUMINANCE_SENSOR_THRESHOLD,
     CONF_TURN_OFF_BLOCKING_ENTITY,
     CONF_TURN_OFF_BLOCKING_ENTITIES,
+    CONF_BLOCKED_TIMEOUT,
     CONF_TURN_OFF_DELAY,
     CONF_MOTION_SENSOR_RESETS_TIMER,
 
@@ -91,6 +93,7 @@ ENTITY_SCHEMA = vol.Schema(
         vol.Required(CONF_ROOM, default=[]): cv.entity_ids,
         vol.Required(CONF_ROOMS, default=[]): cv.entity_ids,
         vol.Optional(CONF_TURN_OFF_DELAY, default=DEFAULT_DELAY): cv.positive_int,
+        vol.Optional(CONF_BLOCKED_TIMEOUT, default=DEFAULT_BLOCKING_TIMEOUT): cv.positive_int,
         vol.Optional(CONF_MOTION_SENSOR_RESETS_TIMER, default=False): cv.boolean,
         vol.Required(CONF_MOTION_SENSOR, default=[]): cv.entity_ids,
         vol.Required(CONF_MOTION_SENSORS, default=[]): cv.entity_ids,
@@ -317,6 +320,7 @@ class RoomLightController(entity.Entity):
             CONF_ILLUMINANCE_SENSOR,
             CONF_ILLUMINANCE_SENSOR_THRESHOLD,
             CONF_TURN_OFF_DELAY,
+            "blocking_entities_timeout",
         ]
         for k, v in self.attributes.items():
             if k in PERSISTED_STATE_ATTRIBUTES:
@@ -335,6 +339,8 @@ class RoomLightController(entity.Entity):
 
     def set_attr(self, k, v):
         if k == CONF_TURN_OFF_DELAY:
+            v = str(v) + "s"
+        elif k == "blocking_entities_timeout" and v is not None:
             v = str(v) + "s"
         self.attributes[k] = v
 
@@ -367,9 +373,11 @@ class Model:
         self.illuminanceSensorEntity = None
         self.illuminanceSensorThreshold = None
         self.turnOffDelay = None
+        self.blockedTimeout = None
         self.turnOffScript = []
         self.activateLightSceneOrScript = []
         self.timer_handle = None
+        self.blocking_timer_handle = None
         self.name = None
         self.log = logging.getLogger(__name__ + "." + config.get(CONF_NAME))
         self.context = None
@@ -392,6 +400,7 @@ class Model:
         self.config_turn_off_script(config)
         self.config_turn_on_scene(config)
         self.config_turn_off_delay(config)
+        self.config_blocked_timeout(config)
         self.config_other(config)
         self.prepare_service_data()
 
@@ -445,8 +454,12 @@ class Model:
                 self.log.debug("motion_sensor_state_change :: CONF_MOTION_SENSOR_RESETS_TIMER")
                 self.update(notes="The sensor turned off and reset the timeout. Timer started.")
                 self._reset_timer()
-            else: 
-                self.motion_sensor_off()              
+            else:
+                self.motion_sensor_off()
+
+        if self.matches(new.state, self.SENSOR_OFF_STATE) and self.is_blocked():
+            self.log.debug("motion_sensor_state_change :: motion sensor turned off while blocked")
+            self._schedule_blocking_timer()
 
     @callback
     def turn_off_sensor_state_change(self, entity, old, new):
@@ -603,11 +616,70 @@ class Model:
             self.update(expires_at="waiting for motion sensor off event")
         else:
             self.log.debug("timer_expire :: Trigger timer_expires event")
-            
+
             if self.is_turn_off_sensor_off():
                 self.log.debug("Turn_off_sensor timeout reached")
 
-            self.timer_expires()            
+            self.timer_expires()
+
+    def _cancel_blocking_timer(self):
+        if self.blocking_timer_handle is None:
+            return
+
+        if self.blocking_timer_handle.is_alive():
+            self.blocking_timer_handle.cancel()
+
+        self.blocking_timer_handle = None
+
+    def _schedule_blocking_timer(self):
+        if self.blockedTimeout is None:
+            return
+
+        if self.blockedTimeout <= 0:
+            self.update(blocking_expires_at=None)
+            return
+
+        if self.is_motion_sensor_on():
+            self.log.debug("Blocking timer waiting for motion sensor to turn off.")
+            self._cancel_blocking_timer()
+            self.update(blocking_expires_at=None)
+            return
+
+        self._cancel_blocking_timer()
+
+        expiry_time = datetime.now() + timedelta(seconds=self.blockedTimeout)
+        self.log.info("Starting blocking timeout for %ss", str(self.blockedTimeout))
+
+        self.blocking_timer_handle = Timer(self.blockedTimeout, self._blocking_timer_expired)
+        self.blocking_timer_handle.start()
+
+        if self.is_turn_off_blocked():
+            self.log.debug("Blocking timer scheduled but turn off is currently blocked.")
+
+        self.update(blocking_expires_at=expiry_time)
+
+    def _blocking_timer_expired(self):
+        self.log.debug("Blocking timer expired")
+
+        self.blocking_timer_handle = None
+
+        if not self.is_blocked():
+            self.log.debug("Ignoring blocking timer expiration because state is no longer blocked.")
+            return
+
+        if self.is_turn_off_blocked():
+            self.log.debug("Turn off still blocked; rescheduling blocking timer.")
+            self._schedule_blocking_timer()
+            return
+
+        if self.is_motion_sensor_on():
+            self.log.debug("Motion detected again; rescheduling blocking timer.")
+            self._schedule_blocking_timer()
+            return
+
+        self.log.info("Blocking timeout reached; turning off room lights.")
+        self.update(blocking_expires_at=datetime.now())
+        self.turnOffLightEntities()
 
     # =====================================================
     # S T A T E   M A C H I N E   C O N D I T I O N S
@@ -805,9 +877,12 @@ class Model:
             self.update(blocked_by=self._turn_off_blocking_entity_state())
         else:
             self.update(blocked_by=self._state_entity_state())
+        self._schedule_blocking_timer()
 
     def on_exit_blocked(self):
         self.log.debug("Exiting blocked")
+        self._cancel_blocking_timer()
+        self.update(blocking_expires_at=None)
 
     # =====================================================
     #    C O N F I G U R A T I O N  &  V A L I D A T I O N
@@ -949,6 +1024,10 @@ class Model:
     def config_turn_off_delay(self, config):
         self.turnOffDelay = config.get(CONF_TURN_OFF_DELAY, DEFAULT_DELAY)
 
+    def config_blocked_timeout(self, config):
+        self.blockedTimeout = config.get(CONF_BLOCKED_TIMEOUT, DEFAULT_BLOCKING_TIMEOUT)
+        self.update(blocking_entities_timeout=self.blockedTimeout)
+
     def config_other(self, config):
         self.ignore_state_changes_until = datetime.now()
 
@@ -1013,9 +1092,9 @@ class Model:
         if service_data is not None:
             params = service_data
 
-        params["entity_id"] = entity        
+        params["entity_id"] = entity
         self.hass.add_job(
-            self.hass.services.async_call(domain, service, service_data, context=self.context)
+            self.hass.services.async_call(domain, service, params, context=self.context)
         )
 
     def set_context(self, parent: Optional[Context] = None) -> None:
@@ -1072,6 +1151,7 @@ class Model:
         self.log.debug("Illuminance Sensor Threshold    %s", str(self.illuminanceSensorThreshold))
         self.log.debug("Turn On - Scene or Script:      %s", str(self.activateLightSceneOrScript))
         self.log.debug("Turn Off - Script:              %s", str(self.turnOffScript))
-        self.log.debug("Turn Off - Blocking Entities    %s", str(self.turnOffBlockingEntities))        
+        self.log.debug("Turn Off - Blocking Entities    %s", str(self.turnOffBlockingEntities))
+        self.log.debug("Turn Off - Blocking Timeout     %s", str(self.blockedTimeout))
         self.log.debug("Turn Off - Delay:               %s", str(self.turnOffDelay))
         self.log.debug("--------------------------------------------------")
