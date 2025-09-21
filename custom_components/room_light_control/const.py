@@ -28,6 +28,7 @@ CONF_TURN_OFF_DELAY = "turn_off_delay"
 
 CONF_TURN_OFF_BLOCKING_ENTITY = "turn_off_blocking_entity"
 CONF_TURN_OFF_BLOCKING_ENTITIES = "turn_off_blocking_entities"
+CONF_BLOCKED_TIMEOUT = "blocking_entities_timeout"
 
 STATES = ['idle', 'blocked',
           {'name': 'active', 'children': ['control'],
