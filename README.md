@@ -13,6 +13,8 @@ Room Light Control is a Home Assistant integration designed to automatically con
 - **Manual Interference Handling**: Automatically pauses auto-control if manual actions are detected, WHEN
   -  ... lights are already on
   -  ... a scene is activated while auto-control is running (e.g. Philips Hue Scene turned on with your Smartphone)
+- **Automatic Blocking Timeout**: Optionally configure how long manual overrides or blocking entities can hold control before
+  Room Light Control turns the lights off and resumes automation.
 - **Turn-Off Blocking Entities**: Configure entities that, when active, prevent the lights from being turned off (e.g., if a specific device is running or a condition is met).
 - **Flexible Configuration for Advanced Users**: Advanced users can define custom scripts or scenes for more tailored lighting behaviors, while simple setups can rely on automatic light discovery and control.
 
@@ -61,6 +63,7 @@ room_light_control:
 | `turn_off_delay` | The time delay (in seconds) before turning off the lights after no motion is detected. Acts also as a timeout for the turn_off_sensor, if it is configured. (Optional) | `180` |
 | `turn_off_sensor` | A sensor used to detect when a person has left the room. When the state changes from on to off, the lights will be turned off. (Optional) |  |
 | `turn_off_blocking_entity` | An entity that, when active, prevents the lights from turning off. (Optional) |  |
+| `blocking_entities_timeout` | Automatically clear manual overrides or blocking entities after the specified number of seconds with no motion. Set to `0` to disable the timeout. (Optional) | Matches `turn_off_delay` (`180` by default) |
 
 **Example Configurations:**
 
@@ -112,12 +115,23 @@ e) **Using a Human Presence Sensor (Aqara FP1)** - The lights will turn on when 
 ```yaml
 - bath_light_control:
     room: bath
-    motion_sensor: 
+    motion_sensor:
       - binary_sensor.bath_ground_motion_sensor # PIR motion sensor
       - binary_sensor.bath_occupancy # mmwave motion sensor
     turn_off_sensor:
       - binary_sensor.bath_occupancy # mmwave motion sensor
-    activate_light_script_or_scene: script.bath_activate_light 
+    activate_light_script_or_scene: script.bath_activate_light
+```
+
+f) **Automatic Timeout for Manual Overrides** - When lights are turned on manually or blocked by an entity, Room Light Control will resume automation after no motion is detected for the configured timeout. Setting the timeout to `0` disables the auto-clear behavior.
+```yaml
+- hobby_room_light_control:
+    room: hobby_room
+    motion_sensor:
+      - binary_sensor.hobby_room_motion
+    turn_off_blocking_entity:
+      - input_boolean.hobby_room_manual_hold
+    blocking_entities_timeout: 600  # 10 minutes after motion stops
 ```
 
 ## Debugging
@@ -153,6 +167,7 @@ logger:
 **New Features**
 - Renamed `turn_on_light` to `activate_light_script_or_scene` to better reflect its intended purpose of only working with scenes or scripts.
 - Made `activate_light_script_or_scene` an optional configuration variable. When it is not provided, the integration will automatically turn on lights in the room (`roomLightEntities`) instead of requiring a scene or script.
+- Added `blocking_entities_timeout` to automatically clear manual overrides and resume automation after inactivity.
 
 **Bug Fixes**
 - Improved logging to clearly indicate whether `roomLightEntities` are being used by default or if a scene/script is being activated.
